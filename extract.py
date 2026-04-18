@@ -59,7 +59,7 @@ def flush_batch(conn, batch):
     batch.clear()
 
 
-
+def interpret_ogg(file_path, quiet=False):
     try:
         audio = OggVorbis(file_path)
 

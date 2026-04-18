@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS ogg_tracks (
 INSERT_SQL = """
 INSERT INTO ogg_tracks (file, title, artist, album, duration_seconds, sample_rate_hz, bitrate_kbps)
 VALUES (%(file)s, %(title)s, %(artist)s, %(album)s, %(duration_seconds)s, %(sample_rate_hz)s, %(bitrate_kbps)s)
+ON DUPLICATE KEY UPDATE
+    title=VALUES(title), artist=VALUES(artist), album=VALUES(album),
+    duration_seconds=VALUES(duration_seconds), sample_rate_hz=VALUES(sample_rate_hz),
+    bitrate_kbps=VALUES(bitrate_kbps)
 """
 
 
@@ -46,7 +50,16 @@ def open_db(host, port, user, password, database):
     return conn
 
 
-def interpret_ogg(file_path, quiet=False):
+def flush_batch(conn, batch):
+    if not batch:
+        return
+    with conn.cursor() as cur:
+        cur.executemany(INSERT_SQL, batch)
+    conn.commit()
+    batch.clear()
+
+
+
     try:
         audio = OggVorbis(file_path)
 
@@ -107,7 +120,8 @@ def interpret_ogg(file_path, quiet=False):
 @click.option("--db-user", default=None, help="MariaDB user.")
 @click.option("--db-password", default=None, help="MariaDB password.", hide_input=True)
 @click.option("--db-name", default=None, help="MariaDB database name.")
-def main(path, output, quiet, db_host, db_port, db_user, db_password, db_name):
+@click.option("--db-batch-size", default=500, show_default=True, help="Rows per DB batch insert.")
+def main(path, output, quiet, db_host, db_port, db_user, db_password, db_name, db_batch_size):
     """Extract metadata from OGG Vorbis files.
 
     PATH can be a single .ogg file or a directory that will be searched
@@ -123,6 +137,7 @@ def main(path, output, quiet, db_host, db_port, db_user, db_password, db_name):
     csv_writer = None
     csv_fh = None
     db_conn = None
+    db_batch = []
     count = 0
 
     try:
@@ -144,15 +159,16 @@ def main(path, output, quiet, db_host, db_port, db_user, db_password, db_name):
                 if csv_writer:
                     csv_writer.writerow(result)
                 if db_conn:
-                    with db_conn.cursor() as cur:
-                        cur.execute(INSERT_SQL, result)
+                    db_batch.append(result)
+                    if len(db_batch) >= db_batch_size:
+                        flush_batch(db_conn, db_batch)
 
         if db_conn:
-            db_conn.commit()
+            flush_batch(db_conn, db_batch)  # flush remaining rows
 
     except Exception:
-        if db_conn:
-            db_conn.rollback()
+        if db_conn and db_batch:
+            db_conn.rollback()  # discard any unflushed partial batch
         raise
     finally:
         if csv_fh:

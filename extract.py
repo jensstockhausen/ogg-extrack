@@ -2,10 +2,48 @@ import csv
 import pathlib
 
 import click
+import pymysql
+import pymysql.cursors
 from mutagen.oggvorbis import OggVorbis
 from tqdm import tqdm
 
 CSV_FIELDS = ["file", "title", "artist", "album", "duration_seconds", "sample_rate_hz", "bitrate_kbps"]
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS ogg_tracks (
+    id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    file        TEXT         NOT NULL,
+    title       VARCHAR(512),
+    artist      VARCHAR(512),
+    album       VARCHAR(512),
+    duration_seconds DECIMAL(10,2),
+    sample_rate_hz   INT UNSIGNED,
+    bitrate_kbps     SMALLINT UNSIGNED,
+    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+"""
+
+INSERT_SQL = """
+INSERT INTO ogg_tracks (file, title, artist, album, duration_seconds, sample_rate_hz, bitrate_kbps)
+VALUES (%(file)s, %(title)s, %(artist)s, %(album)s, %(duration_seconds)s, %(sample_rate_hz)s, %(bitrate_kbps)s)
+"""
+
+
+def open_db(host, port, user, password, database):
+    conn = pymysql.connect(
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database=database,
+        charset="utf8mb4",
+        cursorclass=pymysql.cursors.Cursor,
+        autocommit=False,
+    )
+    with conn.cursor() as cur:
+        cur.execute(CREATE_TABLE_SQL)
+    conn.commit()
+    return conn
 
 
 def interpret_ogg(file_path, quiet=False):
@@ -64,17 +102,27 @@ def interpret_ogg(file_path, quiet=False):
     default=False,
     help="Suppress per-file output (recommended for large datasets).",
 )
-def main(path, output, quiet):
+@click.option("--db-host", default=None, help="MariaDB host.")
+@click.option("--db-port", default=3306, show_default=True, help="MariaDB port.")
+@click.option("--db-user", default=None, help="MariaDB user.")
+@click.option("--db-password", default=None, help="MariaDB password.", hide_input=True)
+@click.option("--db-name", default=None, help="MariaDB database name.")
+def main(path, output, quiet, db_host, db_port, db_user, db_password, db_name):
     """Extract metadata from OGG Vorbis files.
 
     PATH can be a single .ogg file or a directory that will be searched
     recursively for all .ogg files.
     """
+    db_enabled = all([db_host, db_user, db_name])
+    if any([db_host, db_user, db_name]) and not db_enabled:
+        raise click.UsageError("--db-host, --db-user, and --db-name are all required for database output.")
+
     # Use the generator directly — never materialise the full file list in memory.
     files = iter([path]) if path.is_file() else path.rglob("*.ogg")
 
     csv_writer = None
     csv_fh = None
+    db_conn = None
     count = 0
 
     try:
@@ -82,6 +130,9 @@ def main(path, output, quiet):
             csv_fh = output.open("w", newline="", encoding="utf-8")
             csv_writer = csv.DictWriter(csv_fh, fieldnames=CSV_FIELDS)
             csv_writer.writeheader()
+
+        if db_enabled:
+            db_conn = open_db(db_host, db_port, db_user, db_password or "", db_name)
 
         with tqdm(files, unit="file", desc="Processing", disable=not quiet) as progress:
             for f in progress:
@@ -92,9 +143,22 @@ def main(path, output, quiet):
                 count += 1
                 if csv_writer:
                     csv_writer.writerow(result)
+                if db_conn:
+                    with db_conn.cursor() as cur:
+                        cur.execute(INSERT_SQL, result)
+
+        if db_conn:
+            db_conn.commit()
+
+    except Exception:
+        if db_conn:
+            db_conn.rollback()
+        raise
     finally:
         if csv_fh:
             csv_fh.close()
+        if db_conn:
+            db_conn.close()
 
     if count == 0:
         click.echo("No .ogg files found.", err=True)
@@ -102,6 +166,8 @@ def main(path, output, quiet):
 
     if output:
         click.echo(f"Results written to {output} ({count} files)")
+    if db_enabled:
+        click.echo(f"Inserted {count} rows into {db_name}.ogg_tracks")
 
 
 if __name__ == "__main__":

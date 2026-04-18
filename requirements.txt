@@ -1,3 +1,4 @@
 click==8.3.2
 mutagen==1.47.0
+PyMySQL==1.1.2
 tqdm==4.67.3

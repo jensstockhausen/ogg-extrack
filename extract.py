@@ -9,6 +9,16 @@ from tqdm import tqdm
 
 CSV_FIELDS = ["file", "title", "artist", "album", "duration_seconds", "sample_rate_hz", "bitrate_kbps"]
 
+_OGG_MAGIC = b"OggS"
+
+
+def is_ogg_file(path: pathlib.Path) -> bool:
+    try:
+        with path.open("rb") as fh:
+            return fh.read(4) == _OGG_MAGIC
+    except OSError:
+        return False
+
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS ogg_tracks (
     id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -133,7 +143,10 @@ def main(path, output, quiet, db_host, db_port, db_user, db_password, db_name, d
         raise click.UsageError("--db-host, --db-user, and --db-name are all required for database output.")
 
     # Use the generator directly — never materialise the full file list in memory.
-    files = iter([path]) if path.is_file() else path.rglob("*.ogg")
+    if path.is_file():
+        files = iter([path])
+    else:
+        files = (f for f in path.rglob("*") if f.is_file() and is_ogg_file(f))
 
     csv_writer = None
     csv_fh = None

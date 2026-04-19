@@ -1,10 +1,10 @@
 import csv
 import pathlib
 
+import taglib
 import click
 import pymysql
 import pymysql.cursors
-from mutagen.oggvorbis import OggVorbis
 from tqdm import tqdm
 
 CSV_FIELDS = ["file", "title", "artist", "album", "duration_seconds", "sample_rate_hz", "bitrate_kbps"]
@@ -61,15 +61,16 @@ def flush_batch(conn, batch):
 
 def interpret_ogg(file_path, quiet=False):
     try:
-        audio = OggVorbis(file_path)
+        audio = taglib.File(str(file_path))
 
-        title = audio.get("title", ["Unknown Title"])[0]
-        artist = audio.get("artist", ["Unknown Artist"])[0]
-        album = audio.get("album", ["Unknown Album"])[0]
+        title = audio.tags.get("TITLE", ["Unknown Title"])[0]
+        artist = audio.tags.get("ARTIST", ["Unknown Artist"])[0]
+        album = audio.tags.get("ALBUM", ["Unknown Album"])[0]
 
-        length_in_seconds = audio.info.length
-        sample_rate = audio.info.sample_rate
-        bitrate = audio.info.bitrate / 1000
+        length_in_seconds = audio.length
+        sample_rate = audio.sampleRate
+        bitrate = audio.bitrate
+        audio.close()
 
         if not quiet:
             print(f"File:        {file_path}")

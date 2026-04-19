@@ -1,4 +1,4 @@
 click==8.3.2
-pytaglib>=2.1.0,<3
+pymediainfo>=6.0
 PyMySQL==1.1.2
 tqdm==4.67.3

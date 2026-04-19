@@ -1,10 +1,10 @@
 import csv
 import pathlib
 
-import taglib
 import click
 import pymysql
 import pymysql.cursors
+from pymediainfo import MediaInfo
 from tqdm import tqdm
 
 CSV_FIELDS = ["file", "title", "artist", "album", "duration_seconds", "sample_rate_hz", "bitrate_kbps"]
@@ -71,16 +71,17 @@ def flush_batch(conn, batch):
 
 def interpret_ogg(file_path, quiet=False):
     try:
-        audio = taglib.File(str(file_path))
+        info = MediaInfo.parse(file_path)
+        general = info.general_tracks[0]
+        audio = info.audio_tracks[0]
 
-        title = audio.tags.get("TITLE", ["Unknown Title"])[0]
-        artist = audio.tags.get("ARTIST", ["Unknown Artist"])[0]
-        album = audio.tags.get("ALBUM", ["Unknown Album"])[0]
+        title = general.title or "Unknown Title"
+        artist = general.performer or "Unknown Artist"
+        album = general.album or "Unknown Album"
 
-        length_in_seconds = audio.length
-        sample_rate = audio.sampleRate
-        bitrate = audio.bitrate
-        audio.close()
+        length_in_seconds = (audio.duration or 0) / 1000
+        sample_rate = audio.sampling_rate or 0
+        bitrate = (audio.bit_rate or 0) / 1000
 
         if not quiet:
             print(f"File:        {file_path}")
